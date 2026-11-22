@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BodaLink</title>
+<style>
+:root{--bg:#f6f5f0;--card:#fff;--ink:#23262b;--mut:#6b6f76;--yel:#f2b705;--grn:#1f7a4d;--red:#c0392b;--line:#e3e1d8}
+@media (prefers-color-scheme:dark){:root{--bg:#181a1d;--card:#23262b;--ink:#f1efe8;--mut:#a0a4ab;--line:#33373d}}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+header{background:#23262b;color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:4px solid var(--yel)}
+header b{font-size:20px}header small{color:#cfd2d6;display:block;font-size:12px}
+#sos{background:var(--red);color:#fff;border:0;border-radius:24px;padding:10px 16px;font-weight:700;font-size:15px;display:none}
+main{flex:1;overflow-y:auto;padding:14px 14px 90px}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);display:none;padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{flex:1;background:none;border:0;padding:11px 0 10px;color:var(--mut);font-size:13px;font-weight:600;border-top:3px solid transparent}
+nav button.on{color:var(--ink);border-top-color:var(--yel)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+h2{font-size:18px;margin:4px 0 10px}h3{font-size:16px;margin:0 0 4px}.mut{color:var(--mut);font-size:14px}
+input,select,textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;margin:4px 0 10px}
+.btn{background:var(--yel);color:#23262b;border:0;border-radius:8px;padding:12px 16px;font-weight:700;font-size:16px;width:100%;display:block;text-align:center;text-decoration:none}
+.btn.g{background:var(--grn);color:#fff}.btn.r{background:var(--red);color:#fff}.btn.l{background:var(--line);color:var(--ink)}
+.btn.s{width:auto;display:inline-block;padding:8px 12px;font-size:14px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.tag{display:inline-block;background:var(--yel);color:#23262b;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:700;margin-right:6px}
+.tag.bad{background:var(--red);color:#fff}.tag.ok{background:var(--grn);color:#fff}
+.room{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.msgs{height:48vh;overflow-y:auto}
+.m{max-width:82%;padding:8px 11px;border-radius:12px;margin:6px 0;background:var(--line)}
+.m.me{background:var(--yel);color:#23262b;margin-left:auto}.m small{display:block;color:var(--mut);font-size:11px}.m.me small{color:#4a4a3a}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#23262b;color:#fff;padding:10px 16px;border-radius:20px;display:none;max-width:90%;text-align:center;z-index:9}
+</style></head><body>
+<header><div><b>BodaLink</b><small>Riders helping riders</small></div><button id="sos">SOS</button></header>
+<main id="v"><p class="mut">Loading...</p></main><nav id="nav"></nav><div id="toast"></div>
+<script type="module">
+import{initializeApp}from"https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import{getAuth,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut,onAuthStateChanged}from"https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import{getFirestore,collection,addDoc,doc,setDoc,getDoc,updateDoc,deleteDoc,query,where,orderBy,limit,onSnapshot,serverTimestamp}from"https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+const app=initializeApp({apiKey:"AIzaSyBEMEH67jNPthp5CGQ4kUjBEj2a1wbbGGM",authDomain:"bodalink-95080.firebaseapp.com",projectId:"bodalink-95080",storageBucket:"bodalink-95080.firebasestorage.app",messagingSenderId:"466303396993",appId:"1:466303396993:web:4b577cab6421c6506f3180"});
+const auth=getAuth(app),db=getFirestore(app);
+const $=id=>document.getElementById(id),v=$("v");
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const val=id=>$(id).value.trim();
+let U=null,P=null,tab="feed",room=null,mode="login",signing=false,unsubs=[];
+const clr=()=>{unsubs.forEach(f=>f());unsubs=[]};
+const toast=t=>{const e=$("toast");e.textContent=t;e.style.display="block";setTimeout(()=>e.style.display="none",2800)};
+const ago=t=>{if(!t)return"now";const m=Math.max(1,Math.round((Date.now()-t.toMillis())/6e4));return m<60?m+" min ago":m<1440?Math.round(m/60)+" h ago":Math.round(m/1440)+" d ago"};
+const em=p=>p.replace(/\D/g,"")+"@bodalink.app";
+const key=s=>s.toLowerCase().replace(/\s+/g," ").trim();
+const ROOMS={general:"General",alerts:"Alerts: roads and police",fuel:"Fuel and repairs",savings:"Savings and loans"};
+const RT=["Blocked","Accident","Police check","Flooded","Bad road","Clear and smooth"],BAD=["Blocked","Accident","Flooded"];
+const opts=a=>a.map(x=>`<option>${x}</option>`).join("");
+const tagc=t=>t=="Clear and smooth"?"ok":BAD.includes(t)?"bad":"";
+const fail=e=>toast(e.code=="permission-denied"?"Not allowed. Check the Firestore rules.":(e.message||"Something went wrong"));
+
+function authView(){clr();$("nav").style.display="none";$("sos").style.display="none";
+const su=mode=="signup";
+v.innerHTML=`<div class="card"><h2>${su?"Join BodaLink":"Log in"}</h2>${su?`<label>Your name</label><input id="an" placeholder="e.g. John Otieno"><label>Town or stage</label><input id="at" placeholder="e.g. Kisumu"><label>I am a</label><select id="ar"><option value="rider">Boda rider</option><option value="customer">Customer</option></select>`:""}<label>Phone number</label><input id="ap" inputmode="tel" placeholder="07XX XXX XXX"><label>Password (6 or more characters)</label><input id="aw" type="password"><button class="btn" data-a="${su?"signup":"login"}">${su?"Create my account":"Log in"}</button><p class="mut" style="text-align:center"><a href="#" data-a="mode" style="color:var(--ink)">${su?"I already have an account":"Create a new account"}</a></p></div>`}
+
+function shell(){$("nav").style.display="flex";$("sos").style.display="block";go(tab)}
+function go(t){clr();tab=t;room=null;
+const T=[["feed","Feed"],["chat","Chats"],["roads","Roads"],["rides","Rides"],["me","Me"]];
+$("nav").innerHTML=T.map(x=>`<button class="${tab==x[0]?"on":""}" data-a="go" data-t="${x[0]}">${x[1]}</button>`).join("");
+({feed,chat,roads,rides,me})[t]()}
+
+function listen(q,fn){unsubs.push(onSnapshot(q,fn,fail))}
+
+function feed(){v.innerHTML=`<div class="card"><h2>Share with riders</h2><select id="ft">${opts(["Tip","Alert","News","Success"])}</select><textarea id="fx" rows="2" maxlength="500" placeholder="Share a tip, road alert or news"></textarea><button class="btn" data-a="post">Post</button></div><h2>Community feed</h2><div id="list"></div>`;
+listen(query(collection(db,"posts"),orderBy("createdAt","desc"),limit(30)),s=>{$("list").innerHTML=s.docs.map(d=>{const x=d.data();return`<div class="card"><span class="tag">${esc(x.type)}</span><b>${esc(x.name)}, ${esc(x.town)}</b><p style="margin:6px 0">${esc(x.text)}</p><span class="mut">${ago(x.createdAt)}</span>${x.authorId==U.uid?` <button class="btn s l" data-a="delpost" data-id="${d.id}">Delete</button>`:""}</div>`}).join("")||'<p class="mut">No posts yet. Be the first.</p>'})}
+
+function chat(){if(room)return roomView();
+v.innerHTML=`<h2>Chat rooms</h2><div class="card">${Object.keys(ROOMS).map(k=>`<div class="room" data-a="room" data-id="${k}"><b>${ROOMS[k]}</b><span class="mut">Open</span></div>`).join("")}</div>`}
+function roomView(){v.innerHTML=`<button class="btn s l" data-a="go" data-t="chat">Back</button><h2>${ROOMS[room]}</h2><div class="msgs" id="ms"></div><div class="row"><input id="cm" maxlength="500" placeholder="Type a message"><button class="btn s" style="flex:0 0 90px" data-a="send">Send</button></div>`;
+listen(query(collection(db,"rooms",room,"messages"),orderBy("createdAt","desc"),limit(50)),s=>{const m=$("ms");if(!m)return;m.innerHTML=s.docs.reverse().map(d=>{const x=d.data(),me=x.authorId==U.uid;return`<div class="m${me?" me":""}"><small>${me?"You":esc(x.name)} \u00b7 ${ago(x.createdAt)}</small>${esc(x.text)}</div>`}).join("");m.scrollTop=m.scrollHeight})}
+
+function roads(){v.innerHTML=`<h2>Roads</h2><div class="card"><div class="row"><button class="btn s r" data-a="near" data-q="police station">Nearest police</button><button class="btn s r" data-a="near" data-q="hospital">Nearest hospital</button></div><p class="mut" style="margin:8px 0">In danger, call 999 or 112 first.</p><button class="btn s g" data-a="traffic">See live traffic</button></div><div class="card"><h3>Report the road</h3><select id="rt">${opts(RT)}</select><input id="rn" maxlength="100" placeholder="Road or place"><input id="rc" maxlength="200" placeholder="What is happening? (optional)"><button class="btn" data-a="report">Post report</button></div><h3>Latest reports</h3><div id="list"></div>`;
+listen(query(collection(db,"reports"),orderBy("createdAt","desc"),limit(30)),s=>{$("list").innerHTML=s.docs.map(d=>{const x=d.data();return`<div class="card"><span class="tag ${tagc(x.type)}">${esc(x.type)}</span><b>${esc(x.road)}</b><div class="mut">${esc(x.note)}</div><div class="mut">${esc(x.name)} \u00b7 ${ago(x.createdAt)}</div></div>`}).join("")||'<p class="mut">No reports yet.</p>'})}
+
+function rides(){return P.role=="rider"?riderRides():custRides()}
+function custRides(){v.innerHTML=`<h2>Order a ride</h2><div id="rf"></div>`;
+listen(query(collection(db,"rides"),where("customerId","==",U.uid)),s=>{
+const L=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.toMillis?.()||Date.now())-(a.createdAt?.toMillis?.()||Date.now()));const r=L[0];let h="";
+if(r&&r.status=="open")h=`<div class="card"><h3>Looking for a rider in ${esc(r.town)}</h3><p class="mut">From ${esc(r.pickup)} to ${esc(r.dest)}. Waiting for a rider to accept.</p><button class="btn s l" data-a="cancel" data-id="${r.id}">Cancel</button></div>`;
+else if(r&&r.status=="accepted")h=`<div class="card"><h3>Rider on the way</h3><b>${esc(r.riderName)}</b><p class="mut">From ${esc(r.pickup)} to ${esc(r.dest)}. Agree the fare before you start.</p><div class="row"><a class="btn s g" href="tel:${esc(r.riderPhone)}">Call rider</a><button class="btn s" data-a="share" data-id="${r.id}">Share trip</button></div><div style="margin-top:8px"><button class="btn s l" data-a="finish" data-id="${r.id}">Trip finished</button></div></div>`;
+else h=(r&&r.status=="done"?'<div class="card"><b>Trip complete.</b> Stay safe!</div>':"")+`<div class="card"><label>Pick-up place</label><input id="rp" maxlength="100" placeholder="e.g. Kondele market"><label>Going to</label><input id="rd" maxlength="100" placeholder="e.g. Hospital"><button class="btn g" data-a="request">Request a ride</button><p class="mut" style="margin:8px 0 0">Riders in ${esc(P.town)} will see your request.</p></div>`;
+$("rf").innerHTML=h})}
+function riderRides(){v.innerHTML=`<h2>Rides</h2><div class="card"><h3>${P.online?"You are online":"You are offline"}</h3><p class="mut">${P.online?"Customers in "+esc(P.town)+" can send you requests.":"Go online to see ride requests in "+esc(P.town)+"."}</p><button class="btn s ${P.online?"l":"g"}" data-a="online">${P.online?"Go offline":"Go online"}</button></div><div id="act"></div><div id="open"></div>`;
+listen(query(collection(db,"rides"),where("riderId","==",U.uid)),s=>{const a=s.docs.map(d=>({id:d.id,...d.data()})).find(r=>r.status=="accepted");$("act").innerHTML=a?`<div class="card"><h3>Current ride</h3><b>${esc(a.name)}</b><p class="mut">Pick-up: ${esc(a.pickup)}<br>Going to: ${esc(a.dest)}</p><button class="btn s g" data-a="finish" data-id="${a.id}">Trip finished</button></div>`:""});
+if(P.online)listen(query(collection(db,"rides"),where("status","==","open"),where("town","==",P.townKey)),s=>{$("open").innerHTML="<h3>Requests near you</h3>"+(s.docs.map(d=>{const x=d.data();return`<div class="card"><b>${esc(x.name)}</b><div class="mut">Pick-up: ${esc(x.pickup)}</div><div class="mut">Going to: ${esc(x.dest)} \u00b7 ${ago(x.createdAt)}</div><div style="margin-top:8px"><button class="btn s g" data-a="accept" data-id="${d.id}">Accept</button></div></div>`}).join("")||'<p class="mut">No requests right now.</p>')})}
+
+function me(){v.innerHTML=`<div class="card"><h2>${esc(P.name)}</h2><div class="mut">${esc(P.town)} \u00b7 ${esc(P.phone)} \u00b7 ${P.role=="rider"?"Boda rider":"Customer"}</div></div><div class="card"><h3>Your safety</h3><p class="mut">Agree the fare first, share your trip with someone you trust, and call 999 or 112 in an emergency. Your phone number is only shared with the person on your ride.</p></div><button class="btn l" data-a="logout">Log out</button>`}
+
+const H={
+mode(){mode=mode=="login"?"signup":"login";authView()},
+async signup(){const n=val("an"),t=val("at"),p=val("ap"),w=$("aw").value,r=$("ar").value;if(!n||!t||p.replace(/\D/g,"").length<9||w.length<6){toast("Fill in all fields. Password needs 6 or more characters.");return}
+signing=true;try{const c=await createUserWithEmailAndPassword(auth,em(p),w);P={name:n,town:t,townKey:key(t),phone:p,role:r,online:false};await setDoc(doc(db,"users",c.user.uid),P);U=c.user;signing=false;shell()}catch(e){signing=false;toast(e.code=="auth/email-already-in-use"?"That phone number already has an account. Log in.":e.message)}},
+async login(){const p=val("ap"),w=$("aw").value;if(p.replace(/\D/g,"").length<9||!w){toast("Enter your phone and password");return}try{await signInWithEmailAndPassword(auth,em(p),w)}catch(e){toast("Wrong phone number or password")}},
+logout(){signOut(auth)},
+go(d){if(d.t=="chat")room=null;go(d.t)},
+room(d){room=d.id;chat()},
+async post(){const t=val("fx");if(!t)return;try{await addDoc(collection(db,"posts"),{authorId:U.uid,name:P.name,town:P.town,type:$("ft").value,text:t,createdAt:serverTimestamp()});$("fx").value=""}catch(e){fail(e)}},
+async delpost(d){try{await deleteDoc(doc(db,"posts",d.id))}catch(e){fail(e)}},
+async send(){const t=val("cm");if(!t)return;$("cm").value="";try{await addDoc(collection(db,"rooms",room,"messages"),{authorId:U.uid,name:P.name,text:t,createdAt:serverTimestamp()})}catch(e){fail(e)}},
+async report(){const r=val("rn");if(!r){toast("Enter the road or place");return}try{await addDoc(collection(db,"reports"),{authorId:U.uid,name:P.name,type:$("rt").value,road:r,note:val("rc"),createdAt:serverTimestamp()});$("rn").value="";$("rc").value="";toast("Report posted")}catch(e){fail(e)}},
+near(d){window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(d.q+" near me"),"_blank","noopener")},
+traffic(){window.open("https://www.google.com/maps/@?api=1&map_action=map&layer=traffic","_blank","noopener")},
+async request(){const a=val("rp"),b=val("rd");if(!a||!b){toast("Enter pick-up and destination");return}try{await addDoc(collection(db,"rides"),{customerId:U.uid,name:P.name.split(" ")[0],pickup:a,dest:b,town:P.townKey,status:"open",riderId:"",riderName:"",riderPhone:"",createdAt:serverTimestamp()})}catch(e){fail(e)}},
+async cancel(d){try{await updateDoc(doc(db,"rides",d.id),{status:"cancelled"})}catch(e){fail(e)}},
+async finish(d){try{await updateDoc(doc(db,"rides",d.id),{status:"done"})}catch(e){fail(e)}},
+async accept(d){try{await updateDoc(doc(db,"rides",d.id),{status:"accepted",riderId:U.uid,riderName:P.name,riderPhone:P.phone});toast("Ride accepted. Call the customer on arrival.")}catch(e){fail(e)}},
+async online(){try{P.online=!P.online;await updateDoc(doc(db,"users",U.uid),{online:P.online});riderRides()}catch(e){P.online=!P.online;fail(e)}},
+async share(d){const s=await getDoc(doc(db,"rides",d.id)),r=s.data();window.open("https://wa.me/?text="+encodeURIComponent(`I am taking a boda ride. Rider: ${r.riderName}, phone ${r.riderPhone}. From ${r.pickup} to ${r.dest}. Please check on me.`),"_blank","noopener")}
+};
+document.addEventListener("click",e=>{const b=e.target.closest("[data-a]");if(!b)return;e.preventDefault();const f=H[b.dataset.a];if(f)f(b.dataset)});
+$("sos").onclick=async()=>{try{await addDoc(collection(db,"rooms","alerts","messages"),{authorId:U.uid,name:P.name,text:`SOS from ${P.name} (${P.town}). Please check on them.`,createdAt:serverTimestamp()});toast("Alert sent to riders. Call 999 or 112 if in danger.");tab="chat";room="alerts";shell2()}catch(e){fail(e)}};
+function shell2(){$("nav").innerHTML=$("nav").innerHTML;chat()}
+onAuthStateChanged(auth,async u=>{if(signing)return;U=u;if(!u){P=null;authView();return}
+try{const s=await getDoc(doc(db,"users",u.uid));if(!s.exists()){await signOut(auth);return}P=s.data();shell()}catch(e){fail(e);authView()}});
+</script></body></html>
